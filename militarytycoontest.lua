@@ -1,12 +1,12 @@
 --[[
     CIA MILITARY TYCOON OPTIMIZED SCRIPT
-    - Fixed HTTP request errors
+    - Fixed vehicle spawning with correct UUID
     - Enhanced stealth measures
     - Optimized performance
     - Official Rayfield implementation
 ]]
 
--- Enable secure mode to reduce detection :cite[7]
+-- Enable secure mode to reduce detection 
 getgenv().SecureMode = true
 
 --========================================================================--
@@ -59,6 +59,12 @@ local smallOutpostPositions = {
 
 local armedFortressPositions = {
     Vector3.new(-1385.68, 137.00, 1554.99)
+}
+
+-- Vehicle UUIDs (CORRECTED)
+local VEHICLE_UUIDS = {
+    PLANE = "ad989579-9f33-443d-b3ad-8b968f270a3f", -- Corrected UUID for plane
+    TRUCK = "b08a5285-61e9-4583-8a17-09f6b7560438"
 }
 
 -- Active connections table for proper garbage collection
@@ -261,13 +267,11 @@ local function teleportToCollectButton()
     end
 end
 
--- VEHICLE SPAWNING LOGIC
+-- VEHICLE SPAWNING LOGIC (CORRECTED)
 local function getVehicleSpawnRemote()
-    return safeCall(function()
-        return ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_knit@1.5.1")
-               :WaitForChild("knit"):WaitForChild("Services"):WaitForChild("VehicleService")
-               :WaitForChild("RF"):WaitForChild("Spawn")
-    end)
+    return ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_knit@1.5.1")
+           :WaitForChild("knit"):WaitForChild("Services"):WaitForChild("VehicleService")
+           :WaitForChild("RF"):WaitForChild("Spawn")
 end
 
 local function spawnVehicle(uuid, vehicleName)
@@ -278,13 +282,14 @@ local function spawnVehicle(uuid, vehicleName)
     end
     
     local success, errorMsg = pcall(function()
-        spawnRemote:InvokeServer(uuid)
+        local args = {uuid}
+        spawnRemote:InvokeServer(unpack(args))
     end)
     
     if success then
         Rayfield:Notify("Vehicle Spawn", vehicleName .. " spawn request sent.", 5)
     else
-        Rayfield:Notify("Vehicle Spawn", vehicleName .. " spawn failed.", 7)
+        Rayfield:Notify("Vehicle Spawn", vehicleName .. " spawn failed: " .. tostring(errorMsg), 7)
     end
 end
 
@@ -296,10 +301,10 @@ local function setupDeathTrigger(character)
         if isAutoSpawnPlaneActive or isAutoSpawnTruckActive then
             task.wait(11)
             if isAutoSpawnPlaneActive then
-                spawnVehicle("dbee488e-2773-4578-bf17-1106fc1f9972", "Plane")
+                spawnVehicle(VEHICLE_UUIDS.PLANE, "Plane")
             end
             if isAutoSpawnTruckActive then
-                spawnVehicle("b08a5285-61e9-4583-8a17-09f6b7560438", "Truck")
+                spawnVehicle(VEHICLE_UUIDS.TRUCK, "Truck")
             end
         end
     end)
@@ -398,15 +403,6 @@ local function startCaptureSequence(positions, waitTime, locationType)
     end)
 end
 
--- SAFE CALL FUNCTION
-local function safeCall(func, ...)
-    local success, result = pcall(func, ...)
-    if not success then
-        return nil
-    end
-    return result
-end
-
 -- FIXED SERVER HOP FUNCTION (No HTTP requests)
 local function joinLowPlayerServer()
     Rayfield:Notify("Server Hop", "Searching for optimal server...", 10)
@@ -474,7 +470,7 @@ local Window = Rayfield:CreateWindow({
     Name = "Military Asset Controller",
     LoadingTitle = "Asset Controller",
     LoadingSubtitle = "Initializing strategic overlay",
-    Theme = "AmberGlow",
+    Theme = "Amethyst",
     ConfigurationSaving = {
         Enabled = true,
         FolderName = "CIA_MilitaryTycoon",
