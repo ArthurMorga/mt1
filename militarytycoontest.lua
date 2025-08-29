@@ -300,7 +300,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Military Tycoon Script, LoadingTitle = "Asset Controller", LoadingSubtitle = "Loading script...", Theme = "Amethyst",
     ConfigurationSaving = { Enabled = true, FolderName = "CIA_MilitaryTycoon", FileName = "Configuration" },
-    Discord = { Enabled = true, Invite = "sirius", RememberJoins = true }
+    Discord = { Enabled = true, Invite = "TQajh45K", RememberJoins = true }
 })
 
 local AutomationTab = Window:CreateTab("Automation", "settings")
