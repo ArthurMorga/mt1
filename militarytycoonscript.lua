@@ -1,7 +1,8 @@
 --[[
     CIA MILITARY TYCOON OPTIMIZED SCRIPT
-    - Removed all vehicle spawning features.
+    - Added "No Hold Prompts" feature to make all interactions instantaneous.
     - UI restructure: Consolidated settings into Automation and Teleports tabs.
+    - Removed redundant Settings tab.
     - Full notification coverage verified.
     - Perfected worker prioritization logic.
 ]]
@@ -41,11 +42,22 @@ local collectCooldown = 30
 local rebirthCooldown = 5
 local teleportDuration = 1
 
--- Auto-Rebirth variables
+-- Auto-Rebirth & Auto-Spawn variables
 local isAutoRebirthActive, lastRebirthAttempt, rebirthFunction = false, 0, nil
+local isAutoSpawnPlaneActive, isAutoSpawnTruckActive = false, false
 
 -- Universal Head Resizer variables
 local isHeadResizerActive, headSize, originalProperties = false, 5, {}
+
+-- [NEW] Proximity Prompt variables
+local isNoHoldEnabled = false
+local originalHoldDurations = {}
+
+-- Vehicle UUIDs (CORRECTED)
+local VEHICLE_UUIDS = {
+    PLANE = "ad989579-9f33-443d-b3ad-8b968f270a3f",
+    TRUCK = "b08a5285-61e9-4583-8a17-09f6b7560438"
+}
 
 -- Active connections table for proper garbage collection
 local activeConnections = {}
@@ -54,13 +66,51 @@ local activeConnections = {}
 --                       CORE FEATURE LOGIC BLOCKS                        --
 --========================================================================--
 
+-- [NEW] Proximity Prompt Manipulation Logic
+local function revertAllHoldDurations()
+    for prompt, originalDuration in pairs(originalHoldDurations) do
+        pcall(function()
+            if prompt and prompt.Parent then
+                prompt.HoldDuration = originalDuration
+            end
+        end)
+    end
+    originalHoldDurations = {} -- Clear the table
+end
+
+local function noHoldLoop()
+    while isNoHoldEnabled do
+        for _, descendant in ipairs(workspace:GetDescendants()) do
+            if descendant:IsA("ProximityPrompt") then
+                -- If we haven't already modified this prompt, save its original state
+                if originalHoldDurations[descendant] == nil then
+                    originalHoldDurations[descendant] = descendant.HoldDuration
+                end
+                -- Set the hold duration to 0 for instant interaction
+                descendant.HoldDuration = 0
+            end
+        end
+        task.wait(1) -- A 1-second interval is efficient and catches new prompts quickly
+    end
+end
+
+local function toggleNoHold(value)
+    isNoHoldEnabled = value
+    if isNoHoldEnabled then
+        Rayfield:Notify({ Title = "World Utilities", Content = "No Hold Prompts has been enabled.", Duration = 5 })
+        -- Start the loop in a new coroutine so it doesn't block the rest of the script
+        coroutine.wrap(noHoldLoop)()
+    else
+        Rayfield:Notify({ Title = "World Utilities", Content = "No Hold Prompts has been disabled.", Duration = 5 })
+        -- The loop will terminate on its own, now we just restore the original values
+        revertAllHoldDurations()
+    end
+end
+
 -- UNIVERSAL HEAD RESIZER
 local function revertAllHeadProperties()
     for part, props in pairs(originalProperties) do
-        if part and part.Parent then
-            part.Size = props.Size
-            if props.Mesh and props.Mesh.Parent then props.Mesh.Scale = props.OriginalScale end
-        end
+        if part and part.Parent then part.Size = props.Size; if props.Mesh and props.Mesh.Parent then props.Mesh.Scale = props.OriginalScale end end
     end
     originalProperties = {}
 end
@@ -91,11 +141,8 @@ end
 -- INFINITE JUMP
 local function toggleInfiniteJump(value)
     getgenv().infiniteJump = value
-    if value then
-        Rayfield:Notify({ Title = "Player Utilities", Content = "Infinite Jump has been enabled.", Duration = 5 })
-    else
-        Rayfield:Notify({ Title = "Player Utilities", Content = "Infinite Jump has been disabled.", Duration = 5 })
-    end
+    if value then Rayfield:Notify({ Title = "Player Utilities", Content = "Infinite Jump has been enabled.", Duration = 5 })
+    else Rayfield:Notify({ Title = "Player Utilities", Content = "Infinite Jump has been disabled.", Duration = 5 }) end
 end
 UserInputService.JumpRequest:Connect(function()
     if getgenv().infiniteJump and player.Character then
@@ -126,8 +173,7 @@ end
 
 -- PURCHASE LOGIC
 local function executePurchaseLogic()
-    local myTycoon = getPlayerTycoon()
-    if not myTycoon then return end
+    local myTycoon = getPlayerTycoon(); if not myTycoon then return end
     local remoteFunction = myTycoon:FindFirstChild("RemoteFunction")
     local buttonFolder = myTycoon:FindFirstChild("ButtonFolder")
     if not remoteFunction or not buttonFolder then return end
@@ -151,17 +197,10 @@ local function executePurchaseLogic()
     local otherButtonsToBuy = {}
     for _, buttonModel in ipairs(buttonFolder:GetChildren()) do
         local mainButtonPart = buttonModel:FindFirstChild("Button")
-        if mainButtonPart and isAvailableToBuy(mainButtonPart) then
-            table.insert(otherButtonsToBuy, buttonModel.Name)
-        end
+        if mainButtonPart and isAvailableToBuy(mainButtonPart) then table.insert(otherButtonsToBuy, buttonModel.Name) end
     end
     
-    if #otherButtonsToBuy > 0 then
-        for _, buttonName in ipairs(otherButtonsToBuy) do
-            pcall(function() remoteFunction:InvokeServer("BuyButton", buttonName) end)
-            task.wait(0.1)
-        end
-    end
+    for _, buttonName in ipairs(otherButtonsToBuy) do pcall(function() remoteFunction:InvokeServer("BuyButton", buttonName) end); task.wait(0.1) end
 end
 
 local function executeRebirth()
@@ -186,18 +225,13 @@ local function toggleAutoRebirth(value)
         activeConnections.autoRebirth = RunService.Heartbeat:Connect(executeRebirth)
     else
         Rayfield:Notify({ Title = "Automation", Content = "Auto-Rebirth has been disabled.", Duration = 5 })
-        if activeConnections.autoRebirth then
-            activeConnections.autoRebirth:Disconnect()
-            activeConnections.autoRebirth = nil
-        end
+        if activeConnections.autoRebirth then activeConnections.autoRebirth:Disconnect(); activeConnections.autoRebirth = nil end
     end
 end
 
 local function teleportToCollectButton()
-    local myTycoon = getPlayerTycoon()
-    if not myTycoon then return end
-    local modelsFolder = myTycoon:WaitForChild("Models", 2)
-    if not modelsFolder then return end
+    local myTycoon = getPlayerTycoon(); if not myTycoon then return end
+    local modelsFolder = myTycoon:WaitForChild("Models", 2); if not modelsFolder then return end
     local collectButton
     local starterGiver = modelsFolder:FindFirstChild("StarterGiver")
     if starterGiver then collectButton = starterGiver:FindFirstChild("CollectButton") end
@@ -210,21 +244,43 @@ local function teleportToCollectButton()
     end
 end
 
+-- VEHICLE SPAWNING LOGIC (CORRECTED)
+local function getVehicleSpawnRemote()
+    return ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_knit@1.5.1")
+           :WaitForChild("knit"):WaitForChild("Services"):WaitForChild("VehicleService"):WaitForChild("RF"):WaitForChild("Spawn")
+end
+local function spawnVehicle(uuid, vehicleName)
+    local spawnRemote = getVehicleSpawnRemote()
+    if not spawnRemote then Rayfield:Notify({ Title = "Vehicle Spawn Error", Content = "Could not find spawn remote.", Duration = 7 }); return end
+    pcall(function()
+        spawnRemote:InvokeServer(uuid)
+        Rayfield:Notify({ Title = "Vehicle Spawn", Content = vehicleName .. " spawn request sent.", Duration = 5 })
+    end)
+end
+local function setupDeathTrigger(character)
+    if not character then return end
+    local humanoid = character:WaitForChild("Humanoid")
+    humanoid.Died:Connect(function()
+        if isAutoSpawnPlaneActive or isAutoSpawnTruckActive then
+            task.wait(11)
+            if isAutoSpawnPlaneActive then spawnVehicle(VEHICLE_UUIDS.PLANE, "Plane") end
+            if isAutoSpawnTruckActive then spawnVehicle(VEHICLE_UUIDS.TRUCK, "Truck") end
+        end
+    end)
+end
+player.CharacterAdded:Connect(setupDeathTrigger)
+if player.Character then setupDeathTrigger(player.Character) end
+
 -- FIXED SERVER HOP FUNCTION (No HTTP requests)
 local function joinLowPlayerServer()
     Rayfield:Notify({ Title = "Server Hop", Content = "Searching for optimal server...", Duration = 10 })
-    local placeId = game.PlaceId
-    local avoidedServers = {}
+    local placeId = game.PlaceId; local avoidedServers = {}
     pcall(function() avoidedServers = HttpService:JSONDecode(readfile("CIA_AvoidedServers.json")) end)
     local success, serverList = pcall(function() return TeleportService:GetGameInstancesAsync(placeId) end)
-    if not success or not serverList then
-        Rayfield:Notify({ Title = "Server Hop Error", Content = "Failed to retrieve server list.", Duration = 7 })
-        return
-    end
+    if not success or not serverList then Rayfield:Notify({ Title = "Server Hop Error", Content = "Failed to retrieve server list.", Duration = 7 }); return end
     for _, server in ipairs(serverList) do
         if server.Playing < server.MaxPlayers then
-            local serverId = tostring(server.Id)
-            local shouldAvoid = false
+            local serverId = tostring(server.Id); local shouldAvoid = false
             for _, avoidedId in pairs(avoidedServers) do if serverId == tostring(avoidedId) then shouldAvoid = true; break end end
             if not shouldAvoid then
                 table.insert(avoidedServers, serverId)
@@ -242,51 +298,37 @@ end
 --========================================================================--
 
 local Window = Rayfield:CreateWindow({
-    Name = "Military Asset Controller",
-    LoadingTitle = "Asset Controller",
-    LoadingSubtitle = "Initializing strategic overlay",
-    Theme = "Amethyst",
+    Name = "Military Tycoon Script, LoadingTitle = "Asset Controller", LoadingSubtitle = "Loading script...", Theme = "Amethyst",
     ConfigurationSaving = { Enabled = true, FolderName = "CIA_MilitaryTycoon", FileName = "Configuration" },
-    Discord = { Enabled = false, Invite = "sirius", RememberJoins = true }
+    Discord = { Enabled = true, Invite = "sirius", RememberJoins = true }
 })
 
 local AutomationTab = Window:CreateTab("Automation", "settings")
-AutomationTab:CreateToggle({
-    Name = "Auto-Buy", CurrentValue = false, Flag = "AutoBuyToggle",
+AutomationTab:CreateToggle({ Name = "Auto Buy", CurrentValue = false, Flag = "AutoBuyToggle",
     Callback = function(Value)
         autoBuying = Value
         if autoBuying then
-            Rayfield:Notify({ Title = "Automation", Content = "Auto-Buy has been enabled.", Duration = 5 })
-            activeConnections.autoBuy = RunService.Heartbeat:Connect(function()
-                if autoBuying then executePurchaseLogic(); task.wait(buySweepCooldown) end
-            end)
+            Rayfield:Notify({ Title = "Automation", Content = "Auto Buy has been enabled.", Duration = 5 })
+            activeConnections.autoBuy = RunService.Heartbeat:Connect(function() if autoBuying then executePurchaseLogic(); task.wait(buySweepCooldown) end end)
         else
             Rayfield:Notify({ Title = "Automation", Content = "Auto-Buy has been disabled.", Duration = 5 })
             if activeConnections.autoBuy then activeConnections.autoBuy:Disconnect(); activeConnections.autoBuy = nil end
         end
     end
 })
-AutomationTab:CreateToggle({
-    Name = "Prioritize Workers", Description = "Forces purchase of worker/upgrade buttons, ignoring all others until they are bought.",
-    CurrentValue = false, Flag = "PrioritizeWorkersToggle",
+AutomationTab:CreateToggle({ Name = "Prioritize Workers", Description = "Forces purchase of worker/upgrade buttons, ignoring all others.", CurrentValue = false, Flag = "PrioritizeWorkersToggle",
     Callback = function(Value)
         prioritizeWorkers = Value
-        if Value then
-            Rayfield:Notify({ Title = "Automation", Content = "Worker prioritization is now active.", Duration = 5 })
-        else
-            Rayfield:Notify({ Title = "Automation", Content = "Worker prioritization has been disabled.", Duration = 5 })
-        end
+        if Value then Rayfield:Notify({ Title = "Automation", Content = "Worker prioritization is now active.", Duration = 5 })
+        else Rayfield:Notify({ Title = "Automation", Content = "Worker prioritization has been disabled.", Duration = 5 }) end
     end
 })
-AutomationTab:CreateToggle({
-    Name = "Auto Collect", CurrentValue = false, Flag = "AutoCollectToggle",
+AutomationTab:CreateToggle({ Name = "Auto Collect", CurrentValue = false, Flag = "AutoCollectToggle",
     Callback = function(Value)
         collectTeleporting = Value
         if collectTeleporting then
             Rayfield:Notify({ Title = "Automation", Content = "Auto-Collect has been enabled.", Duration = 5 })
-            activeConnections.autoCollect = RunService.Heartbeat:Connect(function()
-                if collectTeleporting then teleportToCollectButton(); task.wait(collectCooldown) end
-            end)
+            activeConnections.autoCollect = RunService.Heartbeat:Connect(function() if collectTeleporting then teleportToCollectButton(); task.wait(collectCooldown) end end)
         else
             Rayfield:Notify({ Title = "Automation", Content = "Auto-Collect has been disabled.", Duration = 5 })
             if activeConnections.autoCollect then activeConnections.autoCollect:Disconnect(); activeConnections.autoCollect = nil end
@@ -294,36 +336,10 @@ AutomationTab:CreateToggle({
     end
 })
 AutomationTab:CreateToggle({ Name = "Auto Rebirth", CurrentValue = false, Flag = "AutoRebirthToggle", Callback = toggleAutoRebirth })
-
 AutomationTab:CreateSection("Delays & Cooldowns")
-AutomationTab:CreateSlider({
-    Name = "Auto-Buy Sweep Delay",
-    Description = "Delay between each full sweep of all available buttons.",
-    Range = {0.5, 10},
-    Increment = 0.1,
-    Suffix = "seconds",
-    CurrentValue = 1,
-    Flag = "BuyCooldownSlider",
-    Callback = function(Value) buySweepCooldown = Value end
-})
-AutomationTab:CreateSlider({
-    Name = "Auto-Collect Delay",
-    Range = {5, 60},
-    Increment = 1,
-    Suffix = "seconds",
-    CurrentValue = 30,
-    Flag = "CollectCooldownSlider",
-    Callback = function(Value) collectCooldown = Value end
-})
-AutomationTab:CreateSlider({
-    Name = "Rebirth Attempt Delay",
-    Range = {1, 60},
-    Increment = 1,
-    Suffix = "seconds",
-    CurrentValue = 5,
-    Flag = "RebirthCooldownSlider",
-    Callback = function(Value) rebirthCooldown = Value end
-})
+AutomationTab:CreateSlider({ Name = "Auto-Buy Sweep Delay", Description = "Delay between each full sweep.", Range = {0.5, 10}, Increment = 0.1, Suffix = "s", CurrentValue = 1, Flag = "BuyCooldownSlider", Callback = function(Value) buySweepCooldown = Value end })
+AutomationTab:CreateSlider({ Name = "Auto-Collect Delay", Range = {5, 60}, Increment = 1, Suffix = "s", CurrentValue = 30, Flag = "CollectCooldownSlider", Callback = function(Value) collectCooldown = Value end })
+AutomationTab:CreateSlider({ Name = "Rebirth Attempt Delay", Range = {1, 60}, Increment = 1, Suffix = "s", CurrentValue = 5, Flag = "RebirthCooldownSlider", Callback = function(Value) rebirthCooldown = Value end })
 
 local TeleportTab = Window:CreateTab("Teleports", "map-pin")
 TeleportTab:CreateSection("Quick Locations")
@@ -332,65 +348,40 @@ local quickTeleports = {
     ["AirField"] = CFrame.new(-1552.16, 125.47, -2712.45), ["Oil Rig"] = CFrame.new(205.37, 197.22, 4340.92)
 }
 for name, cframe in pairs(quickTeleports) do
-    TeleportTab:CreateButton({
-        Name = name,
-        Callback = function()
-            Rayfield:Notify({ Title = "Teleport", Content = "Teleporting to " .. name .. "...", Duration = teleportDuration })
-            smoothTeleport(cframe, teleportDuration)
-        end
-    })
+    TeleportTab:CreateButton({ Name = name, Callback = function()
+        Rayfield:Notify({ Title = "Teleport", Content = "Teleporting to " .. name .. "...", Duration = teleportDuration })
+        smoothTeleport(cframe, teleportDuration)
+    end })
 end
-TeleportTab:CreateButton({
-    Name = "Teleport to Crate",
+TeleportTab:CreateButton({ Name = "Teleport to Crate",
     Callback = function()
         local crate = workspace:FindFirstChild("Crate")
-        if not crate then
-            Rayfield:Notify({ Title = "Crate Not Found", Content = "There is no crate currently on the map.", Duration = 7 })
-            return
-        end
+        if not crate then Rayfield:Notify({ Title = "Crate Not Found", Content = "There is no crate on the map.", Duration = 7 }); return end
         local hitbox = crate:FindFirstChild("Hitbox")
         if hitbox then
             Rayfield:Notify({ Title = "Teleport", Content = "Teleporting to Crate...", Duration = teleportDuration })
             smoothTeleport(hitbox.CFrame + Vector3.new(0, 5, 0), teleportDuration)
-        else
-            Rayfield:Notify({ Title = "Crate Error", Content = "Crate was found, but its Hitbox was not.", Duration = 7 })
-        end
+        else Rayfield:Notify({ Title = "Crate Error", Content = "Crate was found, but its Hitbox was not.", Duration = 7 }) end
     end
 })
-TeleportTab:CreateButton({
-    Name = "Diamond Refinery",
+TeleportTab:CreateButton({ Name = "Diamond Refinery",
     Callback = function()
         local success, hitboxPart = pcall(function() return workspace.ControlPoints["Diamond Refinery"].ControlPointCore.HitboxOrigin end)
         if success and hitboxPart then
             Rayfield:Notify({ Title = "Teleport", Content = "Teleporting to Diamond Refinery...", Duration = teleportDuration })
             smoothTeleport(hitboxPart.CFrame + Vector3.new(0, 5, 0), teleportDuration)
         else
-            Rayfield:Notify({ 
-                Title = "Teleport Failed", 
-                Content = "Cannot find Diamond Refinery. Try getting closer to it or wait for it to spawn.", 
-                Duration = 7 
-            })
+            Rayfield:Notify({ Title = "Teleport Failed", Content = "Cannot find Diamond Refinery. Try getting closer.", Duration = 7 })
         end
     end
 })
-
 TeleportTab:CreateSection("Teleport Settings")
-TeleportTab:CreateSlider({
-    Name = "Teleport Speed",
-    Description = "Controls the duration of all teleports.",
-    Range = {0.1, 60},
-    Increment = 0.1,
-    Suffix = "seconds",
-    CurrentValue = 1,
-    Flag = "TeleportSpeedSlider",
-    Callback = function(Value) teleportDuration = Value end
-})
+TeleportTab:CreateSlider({ Name = "Teleport Speed", Description = "Controls the duration of all teleports.", Range = {0.1, 60}, Increment = 0.1, Suffix = "s", CurrentValue = 1, Flag = "TeleportSpeedSlider", Callback = function(Value) teleportDuration = Value end })
 
 local MiscTab = Window:CreateTab("Misc & Player", "user")
 MiscTab:CreateSection("Player Utilities")
 MiscTab:CreateToggle({ Name = "Infinite Jump", CurrentValue = false, Flag = "InfiniteJumpToggle", Callback = toggleInfiniteJump })
-MiscTab:CreateButton({
-    Name = "Give BTools",
+MiscTab:CreateButton({ Name = "Give BTools",
     Callback = function()
         local backpack = player.Backpack
         local tools = {{Name = "Hammer", BinType = 4}, {Name = "Clone", BinType = 3}, {Name = "Grab", BinType = 2}}
@@ -398,15 +389,11 @@ MiscTab:CreateButton({
         for _, tool in ipairs(tools) do
             if not backpack:FindFirstChild(tool.Name) then local newTool = Instance.new("HopperBin", backpack); newTool.Name = tool.Name; newTool.BinType = tool.BinType; granted = true end
         end
-        if granted then
-            Rayfield:Notify({ Title = "Utilities", Content = "BTools granted.", Duration = 5 })
-        else
-            Rayfield:Notify({ Title = "Utilities", Content = "BTools already present.", Duration = 5 })
-        end
+        if granted then Rayfield:Notify({ Title = "Utilities", Content = "BTools granted.", Duration = 5 })
+        else Rayfield:Notify({ Title = "Utilities", Content = "BTools already present.", Duration = 5 }) end
     end
 })
-MiscTab:CreateToggle({
-    Name = "Enable Big Heads", Description = "Makes all other player and bot heads bigger (hitbox and visual).", CurrentValue = false, Flag = "BigHeadsToggle",
+MiscTab:CreateToggle({ Name = "Adjust Players Heads", Description = "Makes all other player heads bigger.", CurrentValue = false, Flag = "BigHeadsToggle",
     Callback = function(Value)
         isHeadResizerActive = Value
         if Value then
@@ -418,7 +405,20 @@ MiscTab:CreateToggle({
         end
     end
 })
-MiscTab:CreateSlider({ Name = "Adjustable Head Size", Description = "Controls the size for the 'Big Heads' feature.", Range = {1, 20}, Increment = 0.5, Suffix = " studs", CurrentValue = 5, Flag = "HeadSizeSlider", Callback = function(Value) headSize = Value end })
+MiscTab:CreateSlider({ Name = "Head Size", Description = "Controls the size for 'Big Heads'.", Range = {1, 20}, Increment = 0.5, Suffix = " studs", CurrentValue = 5, Flag = "HeadSizeSlider", Callback = function(Value) headSize = Value end })
+
+MiscTab:CreateSection("World Utilities") -- [NEW]
+MiscTab:CreateToggle({ -- [NEW]
+    Name = "Fast Hold Prompts",
+    Description = "Makes all proximity prompts (like entering vehicles) instant.",
+    CurrentValue = false,
+    Flag = "NoHoldPromptsToggle",
+    Callback = toggleNoHold
+})
+
+--MiscTab:CreateSection("Vehicle Spawners")
+--MiscTab:CreateToggle({ Name = "Auto Spawn Plane on Respawn", Description = "Spawns a plane 11s after you die.", CurrentValue = false, Flag = "AutoSpawnPlaneToggle", Callback = function(Value) isAutoSpawnPlaneActive = Value end })
+--MiscTab:CreateToggle({ Name = "Auto Spawn Truck on Respawn", Description = "Spawns a truck 11s after you die.", CurrentValue = false, Flag = "AutoSpawnTruckToggle", Callback = function(Value) isAutoSpawnTruckActive = Value end })
 MiscTab:CreateSection("Server")
 MiscTab:CreateButton({ Name = "Join Low Player Server", Callback = joinLowPlayerServer })
 
